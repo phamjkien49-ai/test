@@ -29,53 +29,13 @@ print_status() {
     local message=$2
     
     case $type in
-        "INFO") echo -e "\\033[1;34m[INFO]\\033[0m $message" ;;
-        "WARN") echo -e "\\033[1;33m[WARN]\\033[0m $message" ;;
-        "ERROR") echo -e "\\033[1;31m[ERROR]\\033[0m $message" ;;
-        "SUCCESS") echo -e "\\033[1;32m[SUCCESS]\\033[0m $message" ;;
-        "INPUT") echo -e "\\033[1;36m[INPUT]\\033[0m $message" ;;
+        "INFO") echo -e "\033[1;34m[INFO]\033[0m $message" ;;
+        "WARN") echo -e "\033[1;33m[WARN]\033[0m $message" ;;
+        "ERROR") echo -e "\033[1;31m[ERROR]\033[0m $message" ;;
+        "SUCCESS") echo -e "\033[1;32m[SUCCESS]\033[0m $message" ;;
+        "INPUT") echo -e "\033[1;36m[INPUT]\033[0m $message" ;;
         *) echo "[$type] $message" ;;
     esac
-}
-
-# Function to validate input (giữ lại để các hàm khác có thể dùng)
-validate_input() {
-    local type=$1
-    local value=$2
-    
-    case $type in
-        "number")
-            if ! [[ "$value" =~ ^[0-9]+$ ]]; then
-                print_status "ERROR" "Must be a number"
-                return 1
-            fi
-            ;;
-        "size")
-            if ! [[ "$value" =~ ^[0-9]+[GgMm]$ ]]; then
-                print_status "ERROR" "Must be a size with unit (e.g., 100G, 512M)"
-                return 1
-            fi
-            ;;
-        "port")
-            if ! [[ "$value" =~ ^[0-9]+$ ]] || [ "$value" -lt 23 ] || [ "$value" -gt 65535 ]; then
-                print_status "ERROR" "Must be a valid port number (23-65535)"
-                return 1
-            fi
-            ;;
-        "name")
-            if ! [[ "$value" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-                print_status "ERROR" "VM name can only contain letters, numbers, hyphens, and underscores"
-                return 1
-            fi
-            ;;
-        "username")
-            if ! [[ "$value" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
-                print_status "ERROR" "Username must start with a letter or underscore, and contain only letters, numbers, hyphens, and underscores"
-                return 1
-            fi
-            ;;
-    esac
-    return 0
 }
 
 # Function to check dependencies
@@ -126,21 +86,7 @@ load_vm_config() {
 
 # Function to setup VM image (cần thiết cho start_vm)
 setup_vm_image() {
-    print_status "INFO" "Downloading and preparing image..."
-    mkdir -p "$VM_DIR"
-    
-    if [[ ! -f "$IMG_FILE" ]]; then
-        print_status "INFO" "Downloading image from $IMG_URL..."
-        if ! wget --progress=bar:force "$IMG_URL" -O "$IMG_FILE.tmp"; then
-            print_status "ERROR" "Failed to download image from $IMG_URL"
-            exit 1
-        fi
-        mv "$IMG_FILE.tmp" "$IMG_FILE"
-    fi
-    
-    if ! qemu-img resize "$IMG_FILE" "$DISK_SIZE" 2>/dev/null; then
-        print_status "WARN" "Failed to resize disk image. Please check permissions or image format."
-    fi
+    print_status "INFO" "Setting up cloud-init..."
 
     cat > user-data <<EOF
 #cloud-config
@@ -213,14 +159,13 @@ start_vm() {
         print_status "INFO" "Starting QEMU..."
         "${qemu_cmd[@]}"
         
-        print_status "INFO" "VM $vm_name has been shut down"
+        print_status "INFO" "VM $vm_name has been shut down."
     fi
 }
 
 # Function to check if VM is running
 is_vm_running() {
     local vm_name=$1
-    # We load the config to get the unique IMG_FILE path for checking the process
     if load_vm_config "$vm_name"; then
         if pgrep -f "qemu-system-x86_64.*$IMG_FILE" >/dev/null; then
             return 0
@@ -234,7 +179,6 @@ is_vm_running() {
 # ====================================================================
 # NEW MAIN LOGIC: Bỏ qua menu và chạy trực tiếp
 # ====================================================================
-
 run_single_vm() {
     display_header
 
@@ -243,8 +187,8 @@ run_single_vm() {
 
     # Kiểm tra nếu có chính xác một máy ảo
     if [ $vm_count -ne 1 ]; then
-        print_status "ERROR" "Kịch bản yêu cầu có chính xác một máy ảo. Tìm thấy: $vm_count."
-        print_status "INFO" "Vui lòng chỉ để lại một file .conf trong thư mục $VM_DIR."
+        print_status "ERROR" "This script requires exactly one VM. Found: $vm_count."
+        print_status "INFO" "Please ensure there is only one .conf file in the $VM_DIR directory."
         exit 1
     fi
 
@@ -252,52 +196,22 @@ run_single_vm() {
 
     # Kiểm tra nếu máy ảo đã chạy
     if is_vm_running "$vm_name"; then
-        print_status "WARN" "VM '$vm_name' đã chạy."
+        print_status "WARN" "VM '$vm_name' is already running."
         exit 0
     fi
 
-    # Bắt đầu chạy máy ảo và đo thời gian
-    print_status "INFO" "Tự động khởi chạy máy ảo duy nhất: $vm_name"
-    local start_seconds=$(date +%s)
-
-    # Hàm này sẽ chạy cho đến khi máy ảo được tắt
+    # Bắt đầu chạy máy ảo
+    print_status "INFO" "Auto-starting the only available VM: $vm_name"
     start_vm "$vm_name"
-
-    # Tính toán và hiển thị thời gian chạy sau khi máy ảo tắt
-    local end_seconds=$(date +%s)
-    local duration=$((end_seconds - start_seconds))
-
-    local hours=$((duration / 3600))
-    local minutes=$(((duration % 3600) / 60))
-    local seconds=$((duration % 60))
-
-    print_status "SUCCESS" "Tổng thời gian chạy VM: ${hours} giờ ${minutes} phút ${seconds} giây"
 }
 
 # --- MAIN EXECUTION ---
 
-# Bẫy lỗi để dọn dẹp file tạm
 trap cleanup EXIT
-
-# Kiểm tra các phần mềm phụ thuộc
 check_dependencies
 
-# Khởi tạo đường dẫn
 VM_DIR="${VM_DIR:-$HOME/vms}"
 mkdir -p "$VM_DIR"
 
-# Danh sách các hệ điều hành được hỗ trợ (vẫn giữ lại phòng khi cần tạo VM mới)
-declare -A OS_OPTIONS=(
-    ["Ubuntu 22.04"]="ubuntu|jammy|https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img|ubuntu22|ubuntu|ubuntu"
-    ["Ubuntu 24.04"]="ubuntu|noble|https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img|ubuntu24|ubuntu|ubuntu"
-    ["Debian 11"]="debian|bullseye|https://cloud.debian.org/images/cloud/bullseye/latest/debian-11-generic-amd64.qcow2|debian11|debian|debian"
-    ["Debian 12"]="debian|bookworm|https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2|debian12|debian|debian"
-    ["Fedora 40"]="fedora|40|https://download.fedoraproject.org/pub/fedora/linux/releases/40/Cloud/x86_64/images/Fedora-Cloud-Base-40-1.14.x86_64.qcow2|fedora40|fedora|fedora"
-    ["CentOS Stream 9"]="centos|stream9|https://cloud.centos.org/centos/9-stream/x86_64/images/CentOS-Stream-GenericCloud-9-latest.x86_64.qcow2|centos9|centos|centos"
-    ["AlmaLinux 9"]="almalinux|9|https://repo.almalinux.org/almalinux/9/cloud/x86_64/images/AlmaLinux-9-GenericCloud-latest.x86_64.qcow2|almalinux9|alma|alma"
-    ["Rocky Linux 9"]="rockylinux|9|https://download.rockylinux.org/pub/rocky/9/images/x86_64/Rocky-9-GenericCloud.latest.x86_64.qcow2|rocky9|rocky|rocky"
-)
-
-# Chạy hàm logic chính mới thay vì main_menu
+# Chạy hàm logic chính
 run_single_vm
-
